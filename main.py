@@ -5,26 +5,105 @@ import sys
 # from PyQt5 import uic
 from random import choice
 import threading
+import csv
+import os.path
 from menu import MenuWindow
 from test import TestWindow
 from res import ResultWindow
 from form import FormWindow
 from edit import EditWindow
+from enter import EnterWindow
 
 
 DATABASE = 'tests'
+USERNAME = ''
+
+
+class EnterPage(QMainWindow, EnterWindow):  # Окно входа/регистрации
+    def __init__(self):
+        super().__init__()
+        # uic.loadUi('enter.ui', self)
+        self.setupUi(self)
+        self.window = MyWidget()
+        self.pb_enter.clicked.connect(self.start)
+        self.pb_enter_2.clicked.connect(self.register)
+
+    def start(self):    # Вход пользователя и выдача привелегий
+        global USERNAME
+        login = self.get_login.text()
+        password = self.get_password.text()
+        match = ('-1', '-1', -1, '-1')
+        con = sqlite3.connect(DATABASE)
+        cur = con.cursor()
+        for user_t in cur.execute("""SELECT login, password, type, name FROM users""").fetchall():
+            user = (str(user_t[0]), str(user_t[1]), user_t[2], str(user_t[3]))
+            if user[0] == login:
+                match = user
+        if match[0] == '-1':
+            self.status_bar.setText('ОШИБКА: Пользователь не найден')
+        elif match[1] != password:
+            self.status_bar.setText('ОШИБКА: Неверный пароль')
+        elif match[2] == 2:
+            USERNAME = match[3]
+            self.window.pb_edit.hide()
+            self.close()
+            self.window.show()
+        elif match[2] == 1:
+            USERNAME = match[3]
+            self.close()
+            self.window.show()
+        print(USERNAME)
+        con.close()
+
+    def register(self):  # Регистрация нового ученика
+        global USERNAME
+        login = self.get_login_2.text()
+        password = self.get_password_2.text()
+        name = self.get_name.text()
+        do_register = True
+        con = sqlite3.connect(DATABASE)
+        cur = con.cursor()
+        for user in cur.execute("""SELECT login FROM users"""):
+            if str(user[0]) == login:
+                self.status_bar_2.setText('ОШИБКА: Логин занят')
+                do_register = False
+                break
+        con.close()
+        con = sqlite3.connect(DATABASE)
+        cur = con.cursor()
+        cur.execute("""INSERT INTO users(login, password, name, type) VALUES(?, ?, ?, ?)""",
+                    (login, password, name, 2))
+        con.commit()
+        USERNAME = name
+        self.window.pb_edit.hide()
+        self.close()
+        self.window.show()
 
 
 class ResultPage(QMainWindow, ResultWindow):  # Окно с результатами теста
-    def __init__(self, ancestor, ncorrect, nall):
+    def __init__(self, ancestor, ncorrect, nall, test):
         super().__init__()
         # uic.loadUi('res.ui', self)
         self.setupUi(self)
+        self.ncorrect = ncorrect
+        self.percent = self.ncorrect * 100 // nall
+        self.test = test
         self.ancestor = ancestor
-        print(ncorrect, nall)
+        self.save_result()
         self.display_correct.display(ncorrect)
         self.display_all.display(nall)
         self.pb_exit_res.clicked.connect(self.exit_res)
+
+    def save_result(self):
+        test_name = self.test + '.csv'
+        for symbol in ['?', '\\', '/', '"', '<', '>', '|']:
+            test_name = test_name.replace(symbol, '')
+        with open(test_name, 'w', encoding='utf-8', newline='') as filename:
+            writer = csv.writer(filename, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            if not os.path.exists(self.test + '.csv'):
+                writer.writerow(['Имя', 'Количество правильных ответов', 'Процент правильных ответов'])
+            writer.writerow([USERNAME, self.ncorrect, self.percent])
+            print(USERNAME)
 
     def exit_res(self):  # Возвращение в меню
         self.ancestor.ancestor.show()
@@ -85,7 +164,7 @@ class TestPage(QMainWindow, TestWindow):  # Окно с тестом
     def check(self):  # Проверка правильности ответа, изменение цвета кнопки
         if self.do_check:
             self.do_check = False
-            if self.sender().text() == self.corr_ans:
+            if self.sender().text() == str(self.corr_ans):
                 self.sender().setStyleSheet('background-color: green')
                 threading.Timer(2, self.update_question).start()
                 self.correct += 1
@@ -95,7 +174,7 @@ class TestPage(QMainWindow, TestWindow):  # Окно с тестом
 
     def show_result(self):  # Переход к окну с результатами
         self.close()
-        self.resu = ResultPage(self, self.correct, len(self.question_list))
+        self.resu = ResultPage(self, self.correct, len(self.question_list), self.test)
         self.resu.show()
 
     def test_exit(self):  # Выход в меню
@@ -219,7 +298,7 @@ class EditPage(QMainWindow, EditWindow):  # Окно редактировани�
         con = sqlite3.connect(DATABASE)
         cur = con.cursor()
         result = cur.execute("""SELECT questions.id, questions.text, questions.correct_ans,
-         questions.incorrect_ans1, questions.incorrect_ans2, questions.incorrect_ans2
+         questions.incorrect_ans1, questions.incorrect_ans2, questions.incorrect_ans3
           FROM questions INNER JOIN tests ON tests.id = questions.testId
            WHERE tests.title = ?""", (self.choose_test.currentText(),)).fetchall()
         con.close()
@@ -237,6 +316,7 @@ class EditPage(QMainWindow, EditWindow):  # Окно редактировани�
             for i, elem in enumerate(result):
                 self.ids.append(elem[0])
                 for j, val in enumerate(elem[1:]):
+                    print(i, j, val)
                     self.tableView.setItem(i, j, QTableWidgetItem(str(val)))
         else:
             if not self.warning:
@@ -322,7 +402,7 @@ def except_hook(cls, exception, traceback):  # Вывод системных о�
 
 if __name__ == '__main__':  # Запуск приложения
     app = QApplication(sys.argv)
-    ex = MyWidget()
+    ex = EnterPage()
     ex.show()
     sys.excepthook = except_hook
     sys.exit(app.exec_())
